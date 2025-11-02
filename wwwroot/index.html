@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+
+<head>
+    <title>Ava Assist</title>
+    <style>
+        body {
+            background: linear-gradient(135deg, #7b6cf6, #6d85ff);
+            font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        #voice-assistant-container {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 20px;
+            padding: 40px;
+            width: 420px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+            backdrop-filter: blur(50px);
+            -webkit-backdrop-filter: blur(15px);
+        }
+
+        #voice-circle {
+            width: 110px;
+            height: 110px;
+            border-radius: 50%;
+            background: radial-gradient(circle at center, #ff66cc, #9b30ff, #1e90ff);
+            box-shadow: 0 0 30px rgba(155, 48, 255, 0.6), 0 0 60px rgba(30, 144, 255, 0.4);
+            margin: auto;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.1);
+                opacity: 0.9;
+            }
+
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        #voice-circle.animated {
+            animation: pulse 1.5s infinite alternate;
+        }
+
+        #main-text {
+            font-size: 24px;
+            margin-top: 20px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        #sub-text {
+            font-size: 16px;
+            margin-top: 5px;
+            color: #e0e0e0;
+        }
+
+        #micBtn {
+            margin: 25px auto 0 auto;
+            background: linear-gradient(135deg, #9b30ff, #7b6cf6, #6d85ff);
+            border: none;
+            border-radius: 50%;
+            width: 70px;
+            height: 70px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+            transition: transform 0.2s ease;
+            backdrop-filter: blur(50px);
+        }
+
+        #micBtn:hover {
+            transform: scale(1.05);
+        }
+
+        #micBtn img {
+            width: 32px;
+            height: 32px;
+            filter: invert(1);
+        }
+
+        #conversation {
+            margin-top: 30px;
+            padding: 20px;
+            text-align: left;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            font-size: 15px;
+            color: #fff;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        #conversation p {
+            margin: 10px 0;
+            font-size: 16px;
+            color: #e0e0e0;
+        }
+
+        #downloadLink {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 18px;
+            background: linear-gradient(135deg, #7b6cf6, #6d85ff);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.25);
+        }
+
+        .error-message {
+            color: #ff6b6b;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="voice-assistant-container">
+        <div id="voice-circle"></div>
+        <p id="main-text">Hey, Ava here!</p>
+        <p id="sub-text">Tap the mic to connect</p>
+
+        <button id="micBtn">
+            <img src="/static/mic.png" alt="Mic">
+        </button>
+
+        <div id="conversation">
+            <p><strong>You:</strong> <span id="userText"></span></p>
+            <p><strong>Ava:</strong> <span id="botText"></span></p>
+        </div>
+
+        <p id="errorMsg" class="error-message"></p>
+
+        <a id="downloadLink" href="#" download>Download Conversation</a>
+    </div>
+
+    <audio id="player" controls style="display:none;"></audio>
+
+    <script>
+        let mediaRecorder, audioChunks = [];
+        let silenceTimer, isRecording = false, stream;
+        let sessionId = crypto.randomUUID();
+        const micBtn = document.getElementById("micBtn");
+        const voiceCircle = document.getElementById("voice-circle");
+        const player = document.getElementById("player");
+
+        let noiseFloor = 0; // estimated background noise
+        const alpha = 0.05; // smoothing factor for noise estimation
+
+
+        const userText = document.getElementById("userText");
+        const botText = document.getElementById("botText");
+        const errorMsg = document.getElementById("errorMsg");
+        const downloadLink = document.getElementById("downloadLink");
+
+        // store whole conversation
+        let conversationLogs = "";
+
+        function toggleUI(state) {
+            errorMsg.textContent = "";
+            if (state === "listening") {
+                voiceCircle.classList.add("animated");
+                document.getElementById("main-text").textContent = "Listening...";
+                document.getElementById("sub-text").textContent = "Speak now";
+            } else if (state === "processing") {
+                voiceCircle.classList.remove("animated");
+                document.getElementById("main-text").textContent = "Processing...";
+                document.getElementById("sub-text").textContent = "Please wait";
+            } else if (state === "idle") {
+                voiceCircle.classList.remove("animated");
+                document.getElementById("main-text").textContent = "Hey, Ava here!";
+                document.getElementById("sub-text").textContent = "Tap the mic to connect";
+            } else {
+                voiceCircle.classList.remove("animated");
+                document.getElementById("main-text").textContent = "Call ended";
+                document.getElementById("sub-text").textContent = "Tap to start again";
+            }
+        }
+
+
+
+        downloadLink.addEventListener('click', function () {
+            // Use the actual conversation logs
+            const content = conversationLogs || "No conversation recorded yet.";
+            const now = new Date();
+
+            // Format date and time
+            const formatted = now.toISOString()
+                .replace('T', '_')
+                .replace(/:/g, '-')
+                .split('.')[0]; // YYYY-MM-DD_HH-MM-SS
+
+            // Create file name
+            const fileName = `conversation_${formatted}.txt`;
+
+            // Create blob and update link
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+
+            downloadLink.href = url;
+            downloadLink.download = fileName;
+        });
+
+
+
+
+        async function startRecording() {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+            mediaRecorder.onstop = async () => {
+                if (!isRecording) return; // Prevent processing after stopAll()
+                toggleUI("processing");
+
+                const blob = new Blob(audioChunks, { type: "audio/wav" });
+                const formData = new FormData();
+                formData.append("file", blob, "input.wav");
+
+                const res = await fetch(`/api/audio/listen?sessionId=${sessionId}&collectionId=my_collection`, {
+                    method: "POST",
+                    body: formData
+                });
+
+                let data;
+                try {
+                    data = await res.json();
+                } catch (e) {
+                    console.error("Server did not return valid JSON", e);
+                    errorMsg.textContent = "Error: Server response invalid";
+                    toggleUI("idle");
+                    isRecording = false;
+                    return;
+                }
+
+                // Check for errors in response
+                if (!res.ok || data.error) {
+                    errorMsg.textContent = data.error || "Error processing audio";
+                    toggleUI("idle");
+                    isRecording = false;
+                    return;
+                }
+
+                // Update UI with transcription
+                if (!data.userText || data.userText.trim().length === 0) {
+                    userText.textContent = ""; // don't show garbage
+                } else {
+                    userText.textContent = data.userText;
+                    conversationLogs += `You: ${data.userText}\n`;
+                }
+
+                if (data.botText) {
+                    botText.textContent = data.botText;
+                    conversationLogs += `Ava: ${data.botText}\n\n`;
+                }
+
+
+                // Update download link
+                const blob2 = new Blob([conversationLogs], { type: "text/plain" });
+                downloadLink.href = URL.createObjectURL(blob2);
+
+                player.src = data.audioUrl;
+                player.play();
+
+                player.onended = () => {
+                    if (isRecording) {
+                        startRecording(); // restart loop
+                    }
+                };
+            };
+
+            // Silence detection
+            const audioCtx = new AudioContext();
+            const source = audioCtx.createMediaStreamSource(stream);
+            const analyser = audioCtx.createAnalyser();
+            source.connect(analyser);
+            const data = new Uint8Array(analyser.fftSize);
+
+            function checkSilence() {
+                analyser.getByteTimeDomainData(data);
+
+                // Compute RMS (root mean square) to estimate signal energy
+                let sumSquares = 0;
+                for (let i = 0; i < data.length; i++) {
+                    const v = (data[i] - 128) / 128; // normalize to [-1, 1]
+                    sumSquares += v * v;
+                }
+                const rms = Math.sqrt(sumSquares / data.length);
+
+                // Update background noise estimate
+                noiseFloor = (1 - alpha) * noiseFloor + alpha * rms;
+
+                // Voice detected if RMS is above noise floor + threshold
+                const threshold = 0.02; // adjust sensitivity
+                const isSilent = rms < noiseFloor + threshold;
+
+                if (isSilent) {
+                    if (!silenceTimer) {
+                        silenceTimer = setTimeout(() => {
+                            if (mediaRecorder && mediaRecorder.state === "recording") {
+                                mediaRecorder.stop();
+                            }
+                        }, 2500);
+                    }
+                } else {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
+
+                if (isRecording) requestAnimationFrame(checkSilence);
+            }
+
+
+            mediaRecorder.start();
+            toggleUI("listening");
+            isRecording = true;
+            checkSilence();
+        }
+
+        function stopAll() {
+            isRecording = false;
+
+            // stop recording
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+            }
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+
+            // stop playback
+            if (!player.paused) {
+                player.pause();
+                player.currentTime = 0;
+            }
+
+            // endCall server session
+            fetch(`/api/audio/endCall?sessionId=${sessionId}`, { method: "POST" });
+            sessionId = crypto.randomUUID();
+
+            // Show "Session ended" for 3 seconds
+            toggleUI("ended");
+            setTimeout(() => {
+                toggleUI("idle");
+            }, 3000);
+        }
+
+        micBtn.onclick = () => {
+            if (!isRecording) {
+                conversationLogs = "";
+                startRecording();
+            } else {
+                stopAll();
+            }
+        };
+    </script>
+</body>
+
+</html>

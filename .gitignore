@@ -1,0 +1,15 @@
+venv/
+.env
+data/milvus_db
+wwwroot/static/audio
+
+# Logs
+*.log
+
+# IDE or editor files
+.vscode/
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
